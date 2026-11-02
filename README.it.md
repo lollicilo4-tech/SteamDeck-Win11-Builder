@@ -61,6 +61,7 @@ Si apre da solo **Steam Deck Setup**, che:
 
 - esegue gli installer dei driver Valve (se uno chiede di riavviare, scegli "più tardi")
 - mette lo schermo in orizzontale e ti chiede se è dritto
+- imposta lo schermo a 90 Hz
 - ti fa collegare al Wi-Fi
 - installa **Steam** e **Handheld Companion** (controlli come pad Xbox, TDP, overlay)
 - propone di installare **Lossless Scaling** per la frame generation (vedi sotto)
@@ -121,4 +122,4 @@ Decky Loader su Windows esiste ma il progetto lo dichiara non supportato e insta
 - **Errore DirectX `DXGI_ERROR_INVALID_CALL` all'avvio di un gioco** (per esempio EA FC 27): il gioco prova lo schermo intero esclusivo. Mettilo in **finestra senza bordi**. Per FC 27, in `%LOCALAPPDATA%\EA SPORTS FC 27\fcsetup.ini` imposta `FULLSCREEN = 0`, `WINDOWED_BORDERLESS = 1` e `RESOLUTIONHEIGHT = 800`.
 - **Stuttering:** schermo a 90 Hz e gioco bloccato a 45 FPS (V-Sync 50%). Se serve, porta la memoria video a 4 GB dal BIOS: Volume su + Accensione → Setup Utility → Advanced → UMA Frame Buffer Size → 4G.
 - **Giochi che richiedono il Secure Boot** (Battlefield 6, Call of Duty Black Ops 7, Valorant, tornei di Fortnite): non funzionano, perché il Deck non offre il Secure Boot per Windows.
-- **La creazione si è fermata a "Creating the ISO"**: non rilanciare Build-ISO.cmd (ricomincerebbe da zero cancellando `C:\DeckBuild`). Tutto è già pronto in `C:\DeckBuild\iso`: usa i comandi della sezione Troubleshooting del README inglese, da Windows PowerShell come amministratore.
+- **La creazione si è fermata dopo aver finito l'immagine** (per esempio a "Creating the ISO"): rilancia Build-ISO.cmd. Trova il lavoro già fatto in `C:\DeckBuild` e propone di creare solo l'ISO, in un paio di minuti invece di un'ora.

@@ -70,12 +70,8 @@ if (-not (Test-Done 'drivers') -and (Test-Path -LiteralPath $Drivers)) {
     Set-Done 'drivers'
 }
 
-# ---------------------------------------------------------------------------
-# 2. Landscape screen (the Deck panel is natively portrait)
-# ---------------------------------------------------------------------------
-if (-not (Test-Done 'display')) {
-    Write-Step 'Screen orientation'
-    Add-Type -TypeDefinition @'
+# Display helpers (rotation and refresh rate)
+Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class DeckDisplay {
@@ -113,8 +109,29 @@ public static class DeckDisplay {
         dm.dmFields = 0x80 | 0x80000 | 0x100000;   // orientation, width, height
         return ChangeDisplaySettings(ref dm, 1);   // 1 = save to registry
     }
+    public static int MaxRefresh() {
+        DEVMODE cur = Current(); int best = 0;
+        DEVMODE dm = new DEVMODE(); dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        for (int i = 0; EnumDisplaySettings(null, i, ref dm); i++) {
+            if (dm.dmPelsWidth == cur.dmPelsWidth && dm.dmPelsHeight == cur.dmPelsHeight && dm.dmDisplayFrequency > best) best = dm.dmDisplayFrequency;
+        }
+        return best;
+    }
+    public static int CurrentRefresh() { return Current().dmDisplayFrequency; }
+    public static int SetRefresh(int hz) {
+        DEVMODE dm = Current();
+        dm.dmDisplayFrequency = hz;
+        dm.dmFields = 0x400000;                    // display frequency
+        return ChangeDisplaySettings(ref dm, 1);
+    }
 }
 '@
+
+# ---------------------------------------------------------------------------
+# 2. Landscape screen (the Deck panel is natively portrait)
+# ---------------------------------------------------------------------------
+if (-not (Test-Done 'display')) {
+    Write-Step 'Screen orientation'
     if ([DeckDisplay]::IsPortrait()) {
         $r = [DeckDisplay]::SetOrientation(1)
         if ($r -ne 0) {
@@ -129,6 +146,19 @@ public static class DeckDisplay {
         Write-Info 'already landscape'
     }
     Set-Done 'display'
+}
+
+# ---------------------------------------------------------------------------
+# 2b. 90 Hz refresh rate (the OLED panel supports it; 45/90 FPS caps then pace evenly)
+# ---------------------------------------------------------------------------
+if (-not (Test-Done 'refresh')) {
+    $max = [DeckDisplay]::MaxRefresh()
+    if ($max -ge 90 -and [DeckDisplay]::CurrentRefresh() -lt 90) {
+        Write-Step 'Refresh rate'
+        $r = [DeckDisplay]::SetRefresh(90)
+        if ($r -eq 0) { Write-Info 'screen set to 90 Hz' } else { Write-Warn "could not set 90 Hz (code $r): set it from Settings > System > Display > Advanced display" }
+    }
+    Set-Done 'refresh'
 }
 
 # ---------------------------------------------------------------------------

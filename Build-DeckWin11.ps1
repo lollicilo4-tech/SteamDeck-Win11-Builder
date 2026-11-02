@@ -69,6 +69,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $KitRoot = $PSScriptRoot
+$KitVersion = 'v1.1'
 
 # ---------------------------------------------------------------------------
 # Apps to remove (package name prefix). Edit the list as you like.
@@ -161,10 +162,17 @@ function Write-Warn([string]$Message) { Write-Host "    WARNING: $Message" -Fore
 function Invoke-Native {
     param([string]$File, [string[]]$Arguments, [switch]$Quiet)
     $ErrorActionPreference = 'Continue'
-    if ($Quiet) { $out = & $File @Arguments 2>&1 } else { & $File @Arguments | Out-Host }
-    if ($LASTEXITCODE -ne 0) {
+    if ($Quiet) {
+        $out = & $File @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } else {
+        # Start-Process writes straight to the console, so DISM's progress bar stays on one line
+        $p = Start-Process -FilePath $File -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
+        $code = $p.ExitCode
+    }
+    if ($code -ne 0) {
         if ($Quiet -and $out) { $out | Out-Host }
-        throw "$File exited with code $LASTEXITCODE"
+        throw "$File exited with code $code"
     }
 }
 
@@ -200,6 +208,40 @@ function Get-WindowsIso {
     & curl.exe -L --fail --retry 3 --retry-delay 5 -C - -o $partial $url
     if ($LASTEXITCODE -ne 0) { throw "ISO download failed (curl $LASTEXITCODE). Run again: it resumes where it stopped." }
     Move-Item -LiteralPath $partial -Destination $Destination -Force
+}
+
+function New-DeckIso {
+    # Turns the prepared folder into a bootable ISO (BIOS + UEFI)
+    param([string]$IsoDir, [string]$OutputIso, [string]$WorkDir)
+    $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
+    $adkOscdimg = "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\$arch\Oscdimg\oscdimg.exe"
+    if (Test-Path -LiteralPath $adkOscdimg) {
+        $oscdimg = $adkOscdimg
+        Write-Info 'using oscdimg from the installed Windows ADK'
+    } else {
+        $oscdimg = Join-Path $WorkDir 'oscdimg.exe'
+        Write-Info "downloading oscdimg.exe from Microsoft's servers"
+        Invoke-WebRequest -Uri 'https://msdl.microsoft.com/download/symbols/oscdimg.exe/3D44737265000/oscdimg.exe' `
+            -OutFile $oscdimg -UseBasicParsing
+        # The copy on Microsoft's symbol server is old and often has no embedded signature.
+        # It comes over HTTPS from msdl.microsoft.com, so checking it is a Microsoft executable is enough.
+        $item = Get-Item -LiteralPath $oscdimg
+        $head = [IO.File]::ReadAllBytes($oscdimg)[0..1]
+        $sig = Get-AuthenticodeSignature -FilePath $oscdimg
+        $signedOk = ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Microsoft')
+        $looksOk = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A -and $item.Length -gt 50KB -and
+                    $item.VersionInfo.CompanyName -match 'Microsoft')
+        if (-not $signedOk -and -not $looksOk) {
+            throw 'The downloaded oscdimg.exe does not look valid. Install the Windows ADK (Deployment Tools only) and try again.'
+        }
+        if (-not $signedOk) { Write-Info 'oscdimg.exe has no embedded signature (old build) but came from Microsoft over HTTPS: using it' }
+    }
+    $efiBin = Join-Path $IsoDir 'efi\microsoft\boot\efisys_noprompt.bin'   # boots without "press any key"
+    if (-not (Test-Path -LiteralPath $efiBin)) { $efiBin = Join-Path $IsoDir 'efi\microsoft\boot\efisys.bin' }
+    $etfs = Join-Path $IsoDir 'boot\etfsboot.com'
+    if (Test-Path -LiteralPath $OutputIso) { Remove-Item -LiteralPath $OutputIso -Force }
+    Invoke-Native $oscdimg @('-m', '-o', '-u2', '-udfver102', '-lDECK_WIN11',
+        "-bootdata:2#p0,e,b$etfs#pEF,e,b$efiBin", $IsoDir, $OutputIso) -Quiet
 }
 
 function Set-Reg {
@@ -269,6 +311,26 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
     throw "Open 'Windows PowerShell' (5.1) as administrator, not PowerShell 7: the classic DISM cmdlets are needed."
 }
 
+Write-Host "SteamDeck-Win11-Builder $KitVersion" -ForegroundColor Cyan
+
+# Resume: if a previous run stopped after the image was finished, only the ISO is missing
+$resumeDir = Join-Path $WorkDir 'iso'
+if ((Test-Path -LiteralPath (Join-Path $resumeDir 'sources\install.esd')) -and
+    (Test-Path -LiteralPath (Join-Path $resumeDir 'autounattend.xml')) -and
+    -not (Get-WindowsImage -Mounted | Where-Object { $_.Path -like "$WorkDir*" })) {
+    Write-Host ''
+    Write-Host "A finished build was found in $WorkDir (a previous run stopped while creating the ISO)."
+    if (Read-YesNo 'Create only the ISO from it, without starting over?') {
+        if (-not $OutputIso) { $OutputIso = Join-Path $KitRoot 'Win11-SteamDeckOLED.iso' }
+        $OutputIso = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputIso)
+        New-DeckIso -IsoDir $resumeDir -OutputIso $OutputIso -WorkDir $WorkDir
+        if (-not $KeepWorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Host ('DONE: {0} ({1:N1} GB)' -f $OutputIso, ((Get-Item -LiteralPath $OutputIso).Length / 1GB)) -ForegroundColor Green
+        return
+    }
+    Write-Info 'starting over: the previous build will be deleted'
+}
+
 # Regional settings: same as this PC unless given
 if (-not $Locale) { $Locale = (Get-Culture).Name }
 if (-not $Locale) { $Locale = 'en-US' }
@@ -292,7 +354,8 @@ if (-not $IsoPath) {
         if (Read-YesNo "Download it from Microsoft's servers? (about 7 GB; answer n if you already have it)") {
             New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
             $kitFree = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$(Split-Path -Qualifier $downloadDir)'").FreeSpace
-            if ($kitFree -lt 8GB) { throw 'At least 8 GB of free space are needed on the kit drive to download the ISO.' }
+            $kitNeed = if ((Split-Path -Qualifier $downloadDir) -eq (Split-Path -Qualifier $WorkDir)) { 33GB } else { 8GB }
+            if ($kitFree -lt $kitNeed) { throw ('Not enough free space to download the ISO and build: {0:N0} GB free, {1:N0} GB needed.' -f ($kitFree / 1GB), ($kitNeed / 1GB)) }
             try {
                 Get-WindowsIso -Language $IsoLanguage -Destination $autoIso
                 $IsoPath = $autoIso
@@ -349,7 +412,8 @@ $WorkWim  = Join-Path $WorkDir 'install.wim'
 
 $drive = Split-Path -Qualifier $WorkDir
 $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$drive'").FreeSpace
-if ($free -lt 25GB) { throw ('Not enough free space on {0}: {1:N0} GB (at least 25 needed)' -f $drive, ($free / 1GB)) }
+$needed = 25GB
+if ($free -lt $needed) { throw ('Not enough free space on {0}: {1:N0} GB (at least {2:N0} needed)' -f $drive, ($free / 1GB), ($needed / 1GB)) }
 
 $LogFile = [IO.Path]::ChangeExtension($OutputIso, '.log')
 Start-Transcript -Path $LogFile -Force | Out-Null
@@ -691,35 +755,7 @@ try {
     # -----------------------------------------------------------------------
     Write-Step 'Creating the ISO'
     # -----------------------------------------------------------------------
-    $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
-    $adkOscdimg = "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\$arch\Oscdimg\oscdimg.exe"
-    if (Test-Path -LiteralPath $adkOscdimg) {
-        $oscdimg = $adkOscdimg
-        Write-Info 'using oscdimg from the installed Windows ADK'
-    } else {
-        $oscdimg = Join-Path $WorkDir 'oscdimg.exe'
-        Write-Info "downloading oscdimg.exe from Microsoft's servers"
-        Invoke-WebRequest -Uri 'https://msdl.microsoft.com/download/symbols/oscdimg.exe/3D44737265000/oscdimg.exe' `
-            -OutFile $oscdimg -UseBasicParsing
-        # The copy on Microsoft's symbol server is old and often has no embedded signature.
-        # It comes over HTTPS from msdl.microsoft.com, so checking it is a Microsoft executable is enough.
-        $item = Get-Item -LiteralPath $oscdimg
-        $head = [IO.File]::ReadAllBytes($oscdimg)[0..1]
-        $sig = Get-AuthenticodeSignature -FilePath $oscdimg
-        $signedOk = ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Microsoft')
-        $looksOk = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A -and $item.Length -gt 50KB -and
-                    $item.VersionInfo.CompanyName -match 'Microsoft')
-        if (-not $signedOk -and -not $looksOk) {
-            throw 'The downloaded oscdimg.exe does not look valid. Install the Windows ADK (Deployment Tools only) and try again.'
-        }
-        if (-not $signedOk) { Write-Info 'oscdimg.exe has no embedded signature (old build) but came from Microsoft over HTTPS: using it' }
-    }
-    $efiBin = Join-Path $IsoDir 'efi\microsoft\boot\efisys_noprompt.bin'   # boots without "press any key"
-    if (-not (Test-Path -LiteralPath $efiBin)) { $efiBin = Join-Path $IsoDir 'efi\microsoft\boot\efisys.bin' }
-    $etfs = Join-Path $IsoDir 'boot\etfsboot.com'
-    if (Test-Path -LiteralPath $OutputIso) { Remove-Item -LiteralPath $OutputIso -Force }
-    Invoke-Native $oscdimg @('-m', '-o', '-u2', '-udfver102', '-lDECK_WIN11',
-        "-bootdata:2#p0,e,b$etfs#pEF,e,b$efiBin", $IsoDir, $OutputIso) -Quiet
+    New-DeckIso -IsoDir $IsoDir -OutputIso $OutputIso -WorkDir $WorkDir
 
     $success = $true
     $size = (Get-Item -LiteralPath $OutputIso).Length / 1GB
@@ -739,7 +775,7 @@ catch {
     Write-Host ''
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "Details in the log: $LogFile"
-    Write-Host "The work folder $WorkDir was kept: do not run Build-ISO.cmd again before reading the README (Troubleshooting)."
+    Write-Host "The work folder $WorkDir was kept. If the image was finished, running Build-ISO.cmd again offers to create only the ISO."
     throw
 }
 finally {

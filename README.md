@@ -32,7 +32,7 @@ Some games with kernel anti-cheat don't run on SteamOS (for example EA SPORTS FC
 4. Valve's driver page opens: download the Steam Deck OLED drivers, press ENTER and pick the folder you saved them in.
 5. Wait 30-60 minutes plus the download. You'll find `Win11-SteamDeckOLED.iso` (and a log) in the kit folder. The original ISO stays in `Download`, so a second run doesn't download it again.
 
-The progress bar can sit on the same percentage for 15-20 minutes during cleanup and compression: that's normal, don't close the window.
+The progress bar can sit on the same percentage for 15-20 minutes during cleanup and compression: that's normal, don't close the window or let the PC go to sleep.
 
 ### Options
 
@@ -73,6 +73,7 @@ In Rufus pick the ISO you built, partition scheme **GPT**, target **UEFI**. When
 
 - runs Valve's driver installers (if one asks to restart, choose "later")
 - rotates the screen to landscape and asks you if it's the right way up
+- sets the screen to 90 Hz
 - helps you connect to Wi-Fi
 - installs **Steam** and **Handheld Companion** (controls as an Xbox pad, TDP, overlay)
 - offers to install **Lossless Scaling** for frame generation (see below)
@@ -120,7 +121,7 @@ Decky Loader on Windows exists, but the project calls it unsupported and unstabl
 
 ## Tips for smoother games
 
-- **90 Hz and an even frame cap:** set the screen to 90 Hz (Settings → Display → Advanced display) and cap games at 30, 45 or 90 FPS. An uneven cap like 60 on 90 Hz stutters even at high FPS. "V-Sync 50%" in a game means 45 FPS at 90 Hz.
+- **90 Hz and an even frame cap:** the first-boot script sets the screen to 90 Hz (check in Settings → Display → Advanced display); cap games at 30, 45 or 90 FPS. An uneven cap like 60 on 90 Hz stutters even at high FPS. "V-Sync 50%" in a game means 45 FPS at 90 Hz.
 - **Per-game TDP profiles** in Handheld Companion (up to 15 W on the OLED), and Windows power mode on **Best performance** for heavy games.
 - **Startup apps:** disable the EA app, Epic Games Launcher, Discord and similar in Task Manager → Startup apps.
 - **More video memory:** if a DirectX 12 game stutters, raise the GPU memory in the BIOS: Deck off → hold **Volume Up** and press **Power** → Setup Utility → Advanced → **UMA Frame Buffer Size** → **4G** → Exit Saving Changes. 12 GB stay for the system; set it back to 1G if a game gets worse.
@@ -131,14 +132,7 @@ Decky Loader on Windows exists, but the project calls it unsupported and unstabl
 - **DirectX error `DXGI_ERROR_INVALID_CALL` when starting a game** (for example EA SPORTS FC): the game is trying exclusive fullscreen. Set it to **borderless window**. For EA SPORTS FC, edit `fcsetup.ini` in `%LOCALAPPDATA%\EA SPORTS FC <year>` and set `FULLSCREEN = 0`, `WINDOWED_BORDERLESS = 1`, `RESOLUTIONHEIGHT = 800`. If it still fails, also set `WAITFORVSYNC = 0`.
 - **Games that need Secure Boot** (Battlefield 6, Call of Duty Black Ops 7, Valorant, Fortnite tournaments) won't run: the Deck doesn't offer Secure Boot for Windows. Regular Fortnite matches and EA SPORTS FC work.
 - **Red errors while the first-boot script installs drivers**, saying no application is associated with a `.sys` file: fixed in this version. If you see them, they're harmless: drivers are also installed from their `.inf` files.
-- **The build stopped at "Creating the ISO"**: don't run Build-ISO.cmd again (it starts over from scratch and deletes `C:\DeckBuild`). Everything is ready in `C:\DeckBuild\iso`; finish it from Windows PowerShell as administrator:
-
-  ```powershell
-  $iso = 'C:\DeckBuild\iso'; $exe = 'C:\DeckBuild\oscdimg.exe'
-  $efi = "$iso\efi\microsoft\boot\efisys_noprompt.bin"; if (-not (Test-Path $efi)) { $efi = "$iso\efi\microsoft\boot\efisys.bin" }
-  & $exe -m -o -u2 -udfver102 -lDECK_WIN11 "-bootdata:2#p0,e,b$iso\boot\etfsboot.com#pEF,e,b$efi" $iso "$env:USERPROFILE\Desktop\Win11-SteamDeckOLED.iso"
-  ```
-
+- **The build stopped after the image was finished** (for example at "Creating the ISO"): run Build-ISO.cmd again. It finds the finished build in `C:\DeckBuild` and offers to create only the ISO, in a couple of minutes instead of an hour.
 - **Anything else:** the log next to the ISO (`Win11-SteamDeckOLED.log`) and `C:\DeckSetup\postinstall.log` on the Deck say where it stopped. Open an issue and attach them.
 
 ## Good to know
@@ -154,6 +148,10 @@ Decky Loader on Windows exists, but the project calls it unsupported and unstabl
 - [Tiny11 Builder](https://github.com/ntdevlabs/tiny11builder) by NTDEV, for many of the registry tweaks
 - [Fido](https://github.com/pbatard/Fido) by Pete Batard, for the official ISO download
 - [Handheld Companion](https://github.com/Valkirie/HandheldCompanion) for controls and TDP on Windows
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
